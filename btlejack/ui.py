@@ -1,5 +1,6 @@
 import signal
 import sys
+import pymysql
 
 from time import time
 from threading import Thread, Lock
@@ -13,6 +14,8 @@ from .dissect.att import *
 from .dissect.l2cap import *
 
 from .version import VERSION
+
+cnt=0
 
 class ForcedTermination(Exception):
     def __init__(self):
@@ -45,7 +48,7 @@ class PromptThread(Thread):
 
     def prompt(self):
         self.lock.acquire()
-        sys.stdout.write('btlejack> ')
+        sys.stdout.write('')
         sys.stdout.flush()
         self.lock.release()
         command = input()
@@ -394,6 +397,39 @@ class CLIConnectionSniffer(ConnectionSniffer):
         ))
         print(' |-- Timeout: %d ms' % (timeout * 10) )
         print('')
+       	
+        conn = pymysql.connect(host='localhost', user='root', password='', db='test', charset='utf8')
+        curs=conn.cursor(pymysql.cursors.DictCursor)
+        
+        hex_addr = hex(self.access_address)
+        
+        hex_addr = hex_addr[2:] if len(hex_addr)%2 == 0 else "0" + hex_addr[2:]
+        hex_addr2 =  ":".join(hex_addr[i:i+2] for i in range(0, len(hex_addr), 2))
+	
+        	
+        AA_p = hex_addr2
+        BD_p = bytes_to_bd_addr(adva)
+        chk_p = '0'
+	
+        sql = "insert into AA(AA, BD, chk) values(%s, %s, %s)"
+        curs.execute(sql, (AA_p, BD_p, chk_p))
+	
+        conn.commit()
+        sql = "select *from AA where chk=%s"
+        curs.execute(sql, (1))
+
+        rows = curs.fetchall()
+
+        global cnt
+        for row in rows:
+            if bytes_to_bd_addr(adva)!=row['BD']:
+                cnt=1
+            else:
+                cnt=0
+                break
+
+        conn.close()
+        #self.jam() 
 
     def on_ll_packet(self, packet):
         """
@@ -411,8 +447,10 @@ class CLIConnectionSniffer(ConnectionSniffer):
                 self.output.write_packet(ts_sec, ts_usec, self.access_address, packet.data[10:])
 
         pkt_hex = ' '.join(['%02x' % c for c in packet.data[10:]])
+        
+        if cnt==1 :
+            self.jam()
         print('LL Data: ' + pkt_hex)
-
 
     def on_hijacking_success(self):
         """
